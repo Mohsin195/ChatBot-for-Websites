@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>SiteSense AI · Turn any website into an AI assistant</title>
+  <meta name="description" content="Paste a URL and get a chatbot that answers only from that website, with sources.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#FAF9F6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F0E0C" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23EA580C'/%3E%3Cstop offset='1' stop-color='%239A3412'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M10.5 20.2c1.3 1.4 3.2 2.1 5.4 2.1 2.9 0 5-1.4 5-3.7 0-4.5-9.3-2.7-9.3-6.6 0-1.5 1.5-2.5 3.7-2.5 1.6 0 3 .5 4 1.4' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    // Runs before paint: enables reveal animations and applies the saved theme without a flash.
+    document.documentElement.classList.add("js");
+    try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=6">
+</head>
+<body>
+  <!-- Shared logo, referenced with <use> -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="logo-grad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#EA580C"/><stop offset="1" stop-color="#9A3412"/>
+      </linearGradient>
+      <symbol id="logo" viewBox="0 0 32 32">
+        <rect width="32" height="32" rx="9" fill="url(#logo-grad)"/>
+        <rect x=".5" y=".5" width="31" height="31" rx="8.5" fill="none" stroke="#fff" stroke-opacity=".22"/>
+        <path d="M10.5 20.2c1.3 1.4 3.2 2.1 5.4 2.1 2.9 0 5-1.4 5-3.7 0-4.5-9.3-2.7-9.3-6.6 0-1.5 1.5-2.5 3.7-2.5 1.6 0 3 .5 4 1.4" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="23.6" cy="8.6" r="1.7" fill="#FFEDD5"/>
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- ===================== Start screen ===================== -->
+  <div id="start" class="screen start">
+    <a class="skip-link" href="#url">Skip to website URL</a>
+    <div class="ambient" aria-hidden="true">
+      <span class="glow glow-a"></span><span class="glow glow-b"></span><span class="glow glow-c"></span>
+      <span class="grid-dots"></span>
+    </div>
+
+    <header class="nav" id="nav">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="SiteSense AI, back to top">
+          <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
+          <span class="brand-name">SiteSense</span><span class="brand-ai">AI</span>
+        </a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="#how">How it works</a>
+          <a href="#features">Features</a>
+        </nav>
+        <div class="nav-actions">
+          <button type="button" class="icon-btn theme-toggle" aria-label="Switch to dark theme">
+            <svg class="i-sun" aria-hidden="true"><use href="#i-sun"/></svg>
+            <svg class="i-moon" aria-hidden="true"><use href="#i-moon"/></svg>
+          </button>
+          <button type="button" class="btn btn-dark btn-sm" id="nav-start">Get started</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- Hero -->
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow-pill enter" style="--d:.05s">
+          <span class="dot" aria-hidden="true"></span>
+          Grounded answers <span class="sep" aria-hidden="true">·</span> Real sources
+        </p>
+        <h1 id="hero-title" class="hero-title">
+          <span class="line enter" style="--d:.12s">Turn any website</span>
+          <span class="line enter" style="--d:.22s">into an <em>AI&nbsp;assistant.</em></span>
+        </h1>
+        <p class="lede enter" style="--d:.34s">Your website already has the answers. SiteSense AI turns them into intelligent conversations, grounded in your content and backed by real sources.</p>
+
+        <form id="crawl-form" class="crawl-card enter" style="--d:.46s" novalidate>
+          <label for="url" class="field-label">Website URL</label>
+          <div class="url-field" id="url-field">
+            <svg class="url-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg>
+            <input id="url" type="text" inputmode="url" autocomplete="url" spellcheck="false" autocapitalize="off"
+                   placeholder="Enter your website URL — example.com" required aria-describedby="url-hint form-error">
+            <svg class="url-valid" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16.2 9.5"/></svg>
+          </div>
+          <p id="url-hint" class="sr-only">Any public website. Example: example.com</p>
+
+          <div class="card-row">
+            <div class="pages-control">
+              <label for="max-pages" class="pages-label">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>
+                Max pages
+              </label>
+              <div class="stepper">
+                <button type="button" class="step-btn" data-step="-100" aria-label="Decrease max pages by 100">−</button>
+                <input id="max-pages" type="number" min="1" max="500" step="1" value="200" inputmode="numeric">
+                <button type="button" class="step-btn" data-step="100" aria-label="Increase max pages by 100">+</button>
+              </div>
+            </div>
+            <button type="submit" id="build-btn" class="btn btn-primary btn-cta">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Build My AI Assistant</span>
+              <svg class="arrow" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+        </form>
+        <ul class="hero-trust enter" style="--d:.56s">
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span id="pages-limit-note">Up to 500 pages</span></li>
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Respects robots.txt</li>
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Every answer cites its sources</li>
+        </ul>
+
+        <!-- Example product preview: static sample content, not a real crawl -->
+        <figure class="preview reveal" aria-label="Example preview of the SiteSense chat workspace with sample content">
+          <div class="pv-window" aria-hidden="true">
+            <div class="pv-titlebar">
+              <span class="pv-lights"><i></i><i></i><i></i></span>
+              <span class="pv-address"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>sitesense.app</span>
+              <span class="pv-tag">Example preview</span>
+            </div>
+            <div class="pv-body">
+              <aside class="pv-side">
+                <div class="pv-site">
+                  <span class="pv-favicon">N</span>
+                  <span><strong>Northwind Studio</strong><small>northwind.example</small></span>
+                </div>
+                <div class="pv-status"><span class="pv-live"></span>Knowledge base ready</div>
+                <dl class="pv-stats">
+                  <div><dt>Pages</dt><dd>128</dd></div>
+                  <div><dt>Chunks</dt><dd>1,942</dd></div>
+                </dl>
+                <p class="pv-side-label">Indexed pages</p>
+                <ul class="pv-pages">
+                  <li><span class="pv-page-dot"></span>/pricing</li>
+                  <li><span class="pv-page-dot"></span>/services/branding</li>
+                  <li><span class="pv-page-dot"></span>/about</li>
+                  <li><span class="pv-page-dot"></span>/process</li>
+                  <li><span class="pv-page-dot"></span>/faq</li>
+                  <li><span class="pv-page-dot"></span>/contact</li>
+                </ul>
+              </aside>
+              <div class="pv-chat">
+                <div class="pv-msg pv-user">How long does a branding project take?</div>
+                <div class="pv-msg pv-bot">
+                  <span class="pv-avatar"></span>
+                  <div class="pv-answer">
+                    <p>A typical branding project takes <strong>6 to 8 weeks</strong>, from discovery workshop to final guidelines <span class="pv-cite">1</span></p>
+                    <p>Larger rebrands with a website are usually planned over 12 weeks <span class="pv-cite">2</span></p>
+                  </div>
+                </div>
+                <div class="pv-composer">
+                  <span>Ask a question about this website…</span>
+                  <span class="pv-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+                  <span class="pv-send"><svg viewBox="0 0 24 24"><path d="M12 19V6M6 12l6-6 6 6"/></svg></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <figcaption class="preview-cap">Example preview with sample content. Your assistant answers from your own website.</figcaption>
+        </figure>
+      </section>
+
+      <!-- Features -->
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="section-head reveal">
+          <p class="kicker">Features</p>
+          <h2 id="features-title">Everything your visitors ask, <em>answered from your pages.</em></h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature reveal" style="--d:0s">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4M8.5 11h5M11 8.5v5"/></svg></span>
+            <h3>Smart website crawling</h3>
+            <p>Discovers pages through sitemaps and internal links, skips logins and files, and renders JavaScript-heavy pages when needed.</p>
+          </article>
+          <article class="feature reveal" style="--d:.08s">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.8 4.7a4 4 0 0 1 5.6 5.6L16.6 12M13 17.5l-1.8 1.8a4 4 0 0 1-5.6-5.6L7.4 12"/></svg></span>
+            <h3>Source-grounded answers</h3>
+            <p>Answers come only from the website's content. Every sentence cites the page it came from, one click away.</p>
+          </article>
+          <article class="feature reveal" style="--d:.16s">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5z"/><path d="M8.5 9.5h7M8.5 12.5h4"/></svg></span>
+            <h3>AI-powered conversations</h3>
+            <p>Turns static pages into a conversation that remembers context, so follow-up questions just work.</p>
+          </article>
+          <article class="feature reveal" style="--d:.24s">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span>
+            <h3>Voice-ready responses</h3>
+            <p>Listen to any answer read aloud, or ask by voice. Transcripts learn the site's own names and terms.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- How it works -->
+      <section id="how" class="section" aria-labelledby="how-title">
+        <div class="section-head reveal">
+          <p class="kicker">How it works</p>
+          <h2 id="how-title">From URL to assistant <em>in three steps.</em></h2>
+        </div>
+        <ol class="timeline reveal">
+          <li class="t-step" style="--d:0s">
+            <span class="t-num mono">01</span>
+            <h3>Enter your website</h3>
+            <p>Paste a website URL and choose how many pages SiteSense may read.</p>
+          </li>
+          <li class="t-step" style="--d:.12s">
+            <span class="t-num mono">02</span>
+            <h3>Let SiteSense analyze it</h3>
+            <p>It discovers pages, extracts their text, and builds a searchable knowledge base. You can watch every stage live.</p>
+          </li>
+          <li class="t-step" style="--d:.24s">
+            <span class="t-num mono">03</span>
+            <h3>Start intelligent conversations</h3>
+            <p>Ask anything. The assistant answers from the website's content and links each claim to its source page.</p>
+          </li>
+        </ol>
+        <div class="cta-band reveal">
+          <p>Ready to try it on your own site?</p>
+          <button type="button" class="btn btn-primary" id="band-start">
+            <span class="btn-label">Enter a website URL</span>
+            <svg class="arrow" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V6M6 12l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span class="brand brand-sm"><svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg><span class="brand-name">SiteSense</span><span class="brand-ai">AI</span></span>
+      <p>Answers grounded in your website's content.</p>
+    </footer>
+  </div>
+
+  <!-- ===================== Build progress ===================== -->
+  <main id="build" class="screen build" hidden>
+    <div class="ambient" aria-hidden="true"><span class="glow glow-a"></span><span class="glow glow-b"></span><span class="grid-dots"></span></div>
+    <div class="build-brand"><svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg><span class="brand-name">SiteSense</span><span class="brand-ai">AI</span></div>
+    <section class="card progress-card" aria-labelledby="build-site">
+      <div class="progress-head">
+        <span class="pulse" aria-hidden="true"><i></i></span>
+        <div class="progress-title">
+          <p class="eyebrow" id="build-stage">Discovering pages</p>
+          <h2 id="build-site">…</h2>
+        </div>
+      </div>
+
+      <ol class="steps" aria-label="Build steps">
+        <li data-step="discovering"><span class="s-dot" aria-hidden="true"></span>Discover</li>
+        <li data-step="crawling"><span class="s-dot" aria-hidden="true"></span>Crawl</li>
+        <li data-step="indexing"><span class="s-dot" aria-hidden="true"></span>Index</li>
+        <li data-step="ready"><span class="s-dot" aria-hidden="true"></span>Ready</li>
+      </ol>
+
+      <div class="bar" role="progressbar" aria-labelledby="build-stage" aria-valuemin="0" aria-valuemax="100" id="bar">
+        <div class="bar-fill" id="bar-fill"></div>
+      </div>
+
+      <dl class="stats">
+        <div><dt>Pages found</dt><dd id="stat-found">0</dd></div>
+        <div><dt>Pages crawled</dt><dd id="stat-crawled">0</dd></div>
+        <div><dt>Chunks indexed</dt><dd id="stat-chunks">0</dd></div>
+      </dl>
+
+      <p id="build-message" class="build-message" aria-live="polite"></p>
+      <div class="build-actions">
+        <button id="cancel-build" type="button" class="btn btn-ghost">Cancel</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== Chat ===================== -->
+  <div id="chat" class="screen chat" hidden>
+    <header class="chat-header">
+      <div class="site-id">
+        <svg class="brand-mark chat-logo" aria-hidden="true"><use href="#logo"/></svg>
+        <span class="divider" aria-hidden="true"></span>
+        <span class="site-avatar">
+          <img id="site-icon" alt="" width="28" height="28">
+          <span id="site-initial" aria-hidden="true"></span>
+        </span>
+        <div class="site-text">
+          <h1 id="site-name"></h1>
+          <a id="site-url" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+      </div>
+      <div class="header-actions">
+        <label class="switch">
+          <input type="checkbox" id="auto-read">
+          <span class="track" aria-hidden="true"></span>
+          <svg class="switch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>
+          <span class="switch-text">Auto-read answers</span>
+        </label>
+        <button type="button" class="icon-btn theme-toggle" aria-label="Switch to dark theme">
+          <svg class="i-sun" aria-hidden="true"><use href="#i-sun"/></svg>
+          <svg class="i-moon" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+        <button id="new-site" type="button" class="btn btn-ghost btn-sm">New website</button>
+      </div>
+    </header>
+
+    <main id="messages" class="messages" aria-live="polite">
+      <div id="welcome" class="welcome">
+        <span class="welcome-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><use href="#logo"/></svg></span>
+        <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Assistant ready</p>
+        <h2>Ask anything about <span id="welcome-name"></span></h2>
+        <p id="welcome-meta" class="muted"></p>
+        <div id="starters" class="starters"></div>
+      </div>
+    </main>
+
+    <form id="ask-form" class="composer">
+      <div class="composer-inner">
+        <label for="question" class="sr-only">Your question</label>
+        <textarea id="question" rows="1" placeholder="Ask a question about this website…" maxlength="2000"></textarea>
+        <button type="button" id="mic" class="btn-mic" aria-label="Ask by voice" aria-pressed="false" title="Ask by voice">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"/></svg>
+        </button>
+        <button type="submit" id="send" class="btn-send" aria-label="Send question">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 12l6-6 6 6"/></svg>
+        </button>
+      </div>
+      <p class="composer-note" id="composer-note" aria-live="polite">Answers come only from this website's content.</p>
+    </form>
+  </div>
+
+  <script src="/static/app.js?v=6"></script>
+</body>
+</html>
