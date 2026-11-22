@@ -49,7 +49,9 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 
 # Local models (ONNX via FastEmbed, CPU only, no API quota)
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
-RERANK_MODEL = os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2").strip()  # empty disables reranking
+RERANK_MODEL = os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2").strip()
+if RERANK_MODEL.lower() == "off":
+    RERANK_MODEL = ""
 MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "model_cache")
 
 # Retrieval: fetch RETRIEVE_CANDIDATES chunks by meaning, rerank them, keep the best TOP_K.
