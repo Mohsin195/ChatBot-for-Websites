@@ -379,7 +379,7 @@ async def _retrieve(site_id: str, queries: list[str]) -> tuple[list[tuple[float,
     """
     col = await asyncio.to_thread(chroma.get_collection, collection_name(site_id))
     n = max(config.TOP_K, config.RETRIEVE_CANDIDATES) if reranker else config.TOP_K
-    chosen, best_hits, scores = [], [], []
+    chosen, scores = [], []
     for query, vec in zip(queries, await embed(queries, "RETRIEVAL_QUERY")):
         res = await asyncio.to_thread(
             col.query, query_embeddings=[vec], n_results=n,
@@ -391,14 +391,8 @@ async def _retrieve(site_id: str, queries: list[str]) -> tuple[list[tuple[float,
             hits = sorted(((r, doc, m) for r, (_, doc, m) in zip(rs, hits)), key=lambda h: h[0], reverse=True)
         hits = hits[:config.TOP_K]
         scores.append(hits[0][0] if hits else float("-inf"))
-        if hits and (not best_hits or hits[0][0] > best_hits[0][0]):
-            best_hits = hits
         if not chosen and scores[-1] >= GATE:
             chosen = hits
-    # The compact deployment model's cosine scores are not calibrated to the BGE gate.
-    # Let the answer model check the retrieved passages for evidence in this case.
-    if not chosen and not reranker and config.EMBED_MODEL == "minishlab/potion-base-8M":
-        chosen = best_hits
     return chosen, scores
 
 
