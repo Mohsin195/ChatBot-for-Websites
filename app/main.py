@@ -299,8 +299,13 @@ async def start_crawl(body: CrawlIn, request: Request):
         s = Site(id=uuid.uuid4().hex[:12], session=sid, url=url, stage="queued",
                  message="Waiting for a free slot…", max_pages=max_pages)
         sites[sid] = s
-        s.task = asyncio.create_task(build(s, max_pages))
+        if not config.ON_VERCEL:
+            s.task = asyncio.create_task(build(s, max_pages))
+        else:
+            await build(s, max_pages)
     log.info("New crawl %s for %s (max %d pages); %d active sites", s.id, url, max_pages, len(sites))
+    if config.ON_VERCEL:
+        return await status(request)
     return {"site_id": s.id}
 
 

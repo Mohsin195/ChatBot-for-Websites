@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ON_VERCEL = os.getenv("VERCEL") == "1"
+
 # Models are public, so never send a (possibly expired) Hugging Face login token when downloading them.
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
