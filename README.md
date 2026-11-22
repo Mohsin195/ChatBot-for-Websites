@@ -18,7 +18,7 @@ Every visitor gets their own chatbot. Visitors are told apart by an anonymous se
 cd "D:\Chatbot For Website"
 py -3.13 -m venv .venv          # or: python -m venv .venv
 .venv\Scripts\Activate.ps1      # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-pip install -r requirements-browser.txt
+pip install -r requirements.txt
 playwright install chromium
 copy .env.example .env
 notepad .env                    # paste your key after GEMINI_API_KEY= (and optionally GROQ_API_KEY=)
@@ -31,7 +31,7 @@ uvicorn app.main:app --reload --reload-dir app --reload-dir static
 cd /path/to/project
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-browser.txt
+pip install -r requirements.txt
 playwright install chromium     # on Linux servers: playwright install --with-deps chromium
 cp .env.example .env
 nano .env                       # paste your key after GEMINI_API_KEY= (and optionally GROQ_API_KEY=)

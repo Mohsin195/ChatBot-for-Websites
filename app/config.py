@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ON_VERCEL = os.getenv("VERCEL") == "1"
-
 # Models are public, so never send a (possibly expired) Hugging Face login token when downloading them.
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -51,9 +49,7 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 
 # Local models (ONNX via FastEmbed, CPU only, no API quota)
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
-RERANK_MODEL = os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2").strip()
-if RERANK_MODEL.lower() == "off":
-    RERANK_MODEL = ""
+RERANK_MODEL = os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2").strip()  # empty disables reranking
 MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "model_cache")
 
 # Retrieval: fetch RETRIEVE_CANDIDATES chunks by meaning, rerank them, keep the best TOP_K.

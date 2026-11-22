@@ -148,11 +148,9 @@ $("crawl-form").addEventListener("submit", async (e) => {
   try {
     const res = await post("/api/crawl", { url, max_pages: maxPages });
     if (!res.ok) { formError(await errorText(res)); return; }
-    const result = await res.json();
-    state.siteId = result.site_id;
+    const { site_id } = await res.json();
+    state.siteId = site_id;
     resetChat();
-    if (result.stage === "ready") { enterChat(result); return; }
-    if (result.stage === "error") { formError(result.message); return; }
     $("build-site").textContent = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
     startPolling();
   } catch {
@@ -225,14 +223,8 @@ function stopPolling() {
 
 async function refreshStatus() {
   try {
-    const response = await fetch("/api/status", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Status request failed (${response.status})`);
-    const s = await response.json();
-    if (!state.poll) return;
-    if (!s.site_id) {
-      $("build-message").textContent = "The server could not find this crawl. Retrying… You can cancel and try again if progress does not resume.";
-      return;
-    }
+    const s = await (await fetch("/api/status")).json();
+    if (!s.site_id) { stopPolling(); show("start"); return; }
     state.siteId = s.site_id;
     renderBuild(s);
     if (s.stage === "ready") { stopPolling(); enterChat(s); }
