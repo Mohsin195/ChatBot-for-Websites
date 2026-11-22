@@ -223,8 +223,14 @@ function stopPolling() {
 
 async function refreshStatus() {
   try {
-    const s = await (await fetch("/api/status")).json();
-    if (!s.site_id) { stopPolling(); show("start"); return; }
+    const response = await fetch("/api/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Status request failed (${response.status})`);
+    const s = await response.json();
+    if (!state.poll) return;
+    if (!s.site_id) {
+      $("build-message").textContent = "The server could not find this crawl. Retrying… You can cancel and try again if progress does not resume.";
+      return;
+    }
     state.siteId = s.site_id;
     renderBuild(s);
     if (s.stage === "ready") { stopPolling(); enterChat(s); }
