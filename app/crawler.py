@@ -294,33 +294,38 @@ class Crawler:
             pending.insert(0, f"{root}{folder}/sitemap.xml")
         done, urls = set(), []
         while pending and len(done) < 100:
-            sm = pending.pop(0)
-            if sm in done:
-                continue
-            done.add(sm)
-            r = await self._get(sm, attempts=2)
-            if r is None or r.status_code != 200:
-                continue
-            body = r.content
-            if body[:2] == b"\x1f\x8b":
-                try:
-                    body = gzip.decompress(body)
-                except OSError:
-                    continue
-            text = body.decode("utf-8", "ignore")
-            locs = [
-                htmllib.unescape(re.sub(r"^<!\[CDATA\[|\]\]>$", "", m.strip()))
-                for m in re.findall(r"<loc>(.*?)</loc>", text, re.S | re.I)
+            batch = list(dict.fromkeys(sm for sm in pending if sm not in done))[
+                :min(config.CRAWL_CONCURRENCY, 100 - len(done))
             ]
-            if re.search(r"<sitemapindex", text, re.I):
-                pending += locs
-            else:
-                urls += locs
+            if not batch:
+                break
+            done.update(batch)
+            pending = [sm for sm in pending if sm not in done]
+            for children, pages in await asyncio.gather(*(self._read_sitemap(sm) for sm in batch)):
+                pending.extend(children)
+                urls.extend(pages)
         log.info("Sitemaps: %d files read, %d URLs listed", len(done), len(urls))
         return urls
 
-    async def _process(self, url: str):
-        r = await self._get(url)
+    async def _read_sitemap(self, url: str) -> tuple[list[str], list[str]]:
+        r = await self._get(url, attempts=2)
+        if r is None or r.status_code != 200:
+            return [], []
+        body = r.content
+        if body[:2] == b"\x1f\x8b":
+            try:
+                body = gzip.decompress(body)
+            except (EOFError, OSError):
+                return [], []
+        text = body.decode("utf-8", "ignore")
+        locs = [
+            htmllib.unescape(re.sub(r"^<!\[CDATA\[|\]\]>$", "", m.strip()))
+            for m in re.findall(r"<loc>(.*?)</loc>", text, re.S | re.I)
+        ]
+        return (locs, []) if re.search(r"<sitemapindex", text, re.I) else ([], locs)
+
+    async def _process(self, url: str, response: httpx.Response | None = None):
+        r = response if response is not None else await self._get(url)
         if r is None or r.status_code != 200:
             self.skipped["unreachable" if r is None else f"http {r.status_code}"] += 1
             return
@@ -342,7 +347,7 @@ class Crawler:
                     title, text, meta = t2, x2, m2
         if key == self._key(self.progress.url) and not self.site_name:
             self.site_name, self.icon = meta["site_name"], meta["icon"]
-        for link in links:
+        for link in sorted(links):
             self._enqueue(link)
         if len(text) < MIN_TEXT_CHARS:
             blocked = BOT_CHECK.search(r.text) and (rendered is None or BOT_CHECK.search(rendered))
@@ -399,15 +404,18 @@ class Crawler:
         self.scheme, self.host = r.url.scheme, r.url.host
         self.base = _bare(self.host)
         root = f"{self.scheme}://{self.host}"
-        self.progress.url = f"{root}{r.url.path or '/'}"
+        self.progress.url = str(r.url)
 
         await self._load_robots(root)
         if not self.robots.can_fetch(config.USER_AGENT, self.progress.url):
             raise CrawlError("This website's robots.txt does not allow crawling.")
 
-        self.progress.message = "Reading sitemaps…"
-        self._enqueue(self.progress.url)
-        for u in await self._sitemap_urls(root):
+        self.progress.message = "Reading the homepage and sitemaps…"
+        self.progress.pages_found = self.found = self.attempts = 1
+        self.seen.add(self._key(self.progress.url) or self.progress.url)
+        _, sitemap_urls = await asyncio.gather(self._process(self.progress.url, r), self._sitemap_urls(root))
+        self.progress.pages_crawled = 1
+        for u in sitemap_urls:
             self._enqueue(u)
         log.info("Starting crawl of %s with %d seed URLs", root, self.queue.qsize())
 

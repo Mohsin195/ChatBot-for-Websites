@@ -10,12 +10,13 @@ from urllib.parse import urlsplit
 import aiohttp
 import chromadb
 import httpx
+import numpy as np
 from fastembed import TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 from google import genai
 from google.genai import errors, types
 
-from . import config, fallback
+from . import config, fallback, shared
 
 log = logging.getLogger("sitesense.rag")
 
@@ -33,7 +34,9 @@ if config.RERANK_MODEL:
     reranker = TextCrossEncoder(config.RERANK_MODEL, cache_dir=config.MODEL_CACHE_DIR)
 # Score a question's best chunk must reach before the LLM is called (reranker score, or cosine similarity).
 GATE = config.RERANK_THRESHOLD if reranker else config.RELEVANCE_THRESHOLD
-chroma = chromadb.PersistentClient(path=config.CHROMA_DIR, settings=chromadb.Settings(anonymized_telemetry=False))
+chroma = None if shared.enabled else chromadb.PersistentClient(
+    path=config.CHROMA_DIR, settings=chromadb.Settings(anonymized_telemetry=False),
+)
 # Gemini's async client runs on aiohttp (timeouts surface as TimeoutError); Groq uses httpx.
 NETWORK_ERRORS = (httpx.TimeoutException, httpx.NetworkError, TimeoutError, aiohttp.ClientError)
 # With a fallback configured, give up on Gemini sooner instead of backing off for minutes.
@@ -312,19 +315,23 @@ async def index_site(site_id: str, pages, progress) -> None:
     items = [(chunk, p) for p in pages for chunk in chunk_page(p.title, p.text)]
     progress.chunks_total = len(items)
     progress.message = f"Indexing {len(items)} text chunks from {len(pages)} pages…"
-    col = await asyncio.to_thread(
-        chroma.create_collection, collection_name(site_id), metadata={"hnsw:space": "cosine"}
-    )
+    col = None
+    if not shared.enabled:
+        col = await asyncio.to_thread(
+            chroma.create_collection, collection_name(site_id), metadata={"hnsw:space": "cosine"}
+        )
     for i in range(0, len(items), EMBED_BATCH):
         batch = items[i:i + EMBED_BATCH]
         vectors = await embed([c for c, _ in batch], "RETRIEVAL_DOCUMENT")
-        await asyncio.to_thread(
-            col.add,
-            ids=[f"{site_id}-{i + j}" for j in range(len(batch))],
-            documents=[c for c, _ in batch],
-            embeddings=vectors,
-            metadatas=[{"url": p.url, "title": p.title, "site_id": site_id} for _, p in batch],
-        )
+        documents = [c for c, _ in batch]
+        metadatas = [{"url": p.url, "title": p.title, "site_id": site_id} for _, p in batch]
+        if shared.enabled:
+            await shared.save_batch(site_id, i // EMBED_BATCH, list(zip(vectors, documents, metadatas)))
+        else:
+            await asyncio.to_thread(
+                col.add, ids=[f"{site_id}-{i + j}" for j in range(len(batch))],
+                documents=documents, embeddings=vectors, metadatas=metadatas,
+            )
         progress.chunks_indexed += len(batch)
         log.info("Indexed %d / %d chunks", progress.chunks_indexed, len(items))
 
@@ -371,29 +378,45 @@ def delete_site(site_id: str) -> None:
         pass  # never created (crawl failed or was cancelled early)
 
 
-async def _retrieve(site_id: str, queries: list[str]) -> tuple[list[tuple[float, str, dict]], list[float]]:
-    """Return hits for the first query whose best match clears the gate, plus every query's best score.
+def _cosine_hits(rows, vector, limit):
+    matrix = np.asarray([row[0] for row in rows], dtype=np.float32)
+    query = np.asarray(vector, dtype=np.float32)
+    norms = np.maximum(np.linalg.norm(matrix, axis=1) * np.linalg.norm(query), 1e-12)
+    scores = (matrix @ query) / norms
+    return [(float(scores[i]), rows[i][1], rows[i][2]) for i in np.argsort(-scores, kind="stable")[:limit]]
+
+
+async def _retrieve(site_id: str, queries: list[str], chunk_count: int) -> tuple[list[tuple[float, str, dict]], list[float]]:
+    """Return hits for the first query whose best match clears the gate, plus the scores checked.
 
     Each query fetches RETRIEVE_CANDIDATES chunks by meaning; the reranker then reads the question with each
     chunk, re-orders them, and the best TOP_K are kept. Hit scores are reranker scores (or cosine without one).
     """
-    col = await asyncio.to_thread(chroma.get_collection, collection_name(site_id))
+    if shared.enabled:
+        rows = await shared.load_rows(site_id, (chunk_count + EMBED_BATCH - 1) // EMBED_BATCH)
+        if not rows:
+            return [], []
+    else:
+        col = await asyncio.to_thread(chroma.get_collection, collection_name(site_id))
     n = max(config.TOP_K, config.RETRIEVE_CANDIDATES) if reranker else config.TOP_K
-    chosen, scores = [], []
+    scores = []
     for query, vec in zip(queries, await embed(queries, "RETRIEVAL_QUERY")):
-        res = await asyncio.to_thread(
-            col.query, query_embeddings=[vec], n_results=n,
-            include=["documents", "metadatas", "distances"],
-        )
-        hits = [(1 - d, doc, m) for d, doc, m in zip(res["distances"][0], res["documents"][0], res["metadatas"][0])]
+        if shared.enabled:
+            hits = await asyncio.to_thread(_cosine_hits, rows, vec, n)
+        else:
+            res = await asyncio.to_thread(
+                col.query, query_embeddings=[vec], n_results=n,
+                include=["documents", "metadatas", "distances"],
+            )
+            hits = [(1 - d, doc, m) for d, doc, m in zip(res["distances"][0], res["documents"][0], res["metadatas"][0])]
         if reranker and hits:
             rs = await rerank(query, [doc for _, doc, _ in hits])
             hits = sorted(((r, doc, m) for r, (_, doc, m) in zip(rs, hits)), key=lambda h: h[0], reverse=True)
         hits = hits[:config.TOP_K]
         scores.append(hits[0][0] if hits else float("-inf"))
-        if not chosen and scores[-1] >= GATE:
-            chosen = hits
-    return chosen, scores
+        if hits and scores[-1] >= GATE:
+            return hits, scores
+    return [], scores
 
 
 def number_sources(hits) -> list[dict]:
@@ -494,10 +517,10 @@ async def stream_answer(site, question: str, history: list):
 
     hits = []
     if not small_talk:
-        queries = [question] + ([f"{prev}\n{question}"] if follow_up else [])
-        hits, scores = await _retrieve(site.id, queries)
-        log.info("Question %r best %s %s (gate %.2f)", question[:80], "rerank score" if reranker else "similarity",
-                 " / with previous question ".join(f"{x:.3f}" for x in scores), GATE)
+        queries = [f"{question}\nPrevious question: {prev}", question] if follow_up else [question]
+        hits, scores = await _retrieve(site.id, queries, site.chunks_indexed)
+        log.info("Question %r %s %s (gate %.2f, follow-up %s)", question[:80],
+                 "rerank scores" if reranker else "similarities", scores, GATE, follow_up)
         if not hits:
             log.info("No relevant content (%.0f ms)", (time.perf_counter() - t0) * 1000)
             yield {"type": "token", "text": NO_INFO.format(**names)}
