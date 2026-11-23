@@ -372,14 +372,14 @@ def delete_site(site_id: str) -> None:
 
 
 async def _retrieve(site_id: str, queries: list[str]) -> tuple[list[tuple[float, str, dict]], list[float]]:
-    """Return hits for the first query whose best match clears the gate, plus every query's best score.
+    """Return hits for the first query whose best match clears the gate, plus the scores checked.
 
     Each query fetches RETRIEVE_CANDIDATES chunks by meaning; the reranker then reads the question with each
     chunk, re-orders them, and the best TOP_K are kept. Hit scores are reranker scores (or cosine without one).
     """
     col = await asyncio.to_thread(chroma.get_collection, collection_name(site_id))
     n = max(config.TOP_K, config.RETRIEVE_CANDIDATES) if reranker else config.TOP_K
-    chosen, scores = [], []
+    scores = []
     for query, vec in zip(queries, await embed(queries, "RETRIEVAL_QUERY")):
         res = await asyncio.to_thread(
             col.query, query_embeddings=[vec], n_results=n,
@@ -391,9 +391,9 @@ async def _retrieve(site_id: str, queries: list[str]) -> tuple[list[tuple[float,
             hits = sorted(((r, doc, m) for r, (_, doc, m) in zip(rs, hits)), key=lambda h: h[0], reverse=True)
         hits = hits[:config.TOP_K]
         scores.append(hits[0][0] if hits else float("-inf"))
-        if not chosen and scores[-1] >= GATE:
-            chosen = hits
-    return chosen, scores
+        if hits and scores[-1] >= GATE:
+            return hits, scores
+    return [], scores
 
 
 def number_sources(hits) -> list[dict]:
@@ -494,10 +494,10 @@ async def stream_answer(site, question: str, history: list):
 
     hits = []
     if not small_talk:
-        queries = [question] + ([f"{prev}\n{question}"] if follow_up else [])
+        queries = [f"{question}\nPrevious question: {prev}", question] if follow_up else [question]
         hits, scores = await _retrieve(site.id, queries)
-        log.info("Question %r best %s %s (gate %.2f)", question[:80], "rerank score" if reranker else "similarity",
-                 " / with previous question ".join(f"{x:.3f}" for x in scores), GATE)
+        log.info("Question %r %s %s (gate %.2f, follow-up %s)", question[:80],
+                 "rerank scores" if reranker else "similarities", scores, GATE, follow_up)
         if not hits:
             log.info("No relevant content (%.0f ms)", (time.perf_counter() - t0) * 1000)
             yield {"type": "token", "text": NO_INFO.format(**names)}

@@ -148,9 +148,11 @@ $("crawl-form").addEventListener("submit", async (e) => {
   try {
     const res = await post("/api/crawl", { url, max_pages: maxPages });
     if (!res.ok) { formError(await errorText(res)); return; }
-    const { site_id } = await res.json();
-    state.siteId = site_id;
+    const result = await res.json();
+    state.siteId = result.site_id;
     resetChat();
+    if (result.stage === "ready") { enterChat(result); return; }
+    if (result.stage === "error") { formError(result.message); return; }
     $("build-site").textContent = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
     startPolling();
   } catch {

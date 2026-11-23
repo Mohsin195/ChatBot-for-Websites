@@ -164,8 +164,10 @@ async def build(s: Site, max_pages: int) -> None:
 
 async def _build(s: Site, max_pages: int) -> None:
     try:
+        started = time.perf_counter()
         c = crawler.Crawler(s.url, max_pages, s)
         pages = await c.run()
+        crawled = time.perf_counter()
         if not pages:
             raise crawler.CrawlError(
                 "No readable content was found. The site may block crawlers, require a login, or be empty."
@@ -175,11 +177,16 @@ async def _build(s: Site, max_pages: int) -> None:
         s.pages_indexed = len(pages)
         s.stage = "indexing"
         await rag.index_site(s.id, pages, s)
+        indexed = time.perf_counter()
         s.message = "Summarising topics…"
-        s.topics = await rag.make_topics(s.name, [p.title for p in pages])
+        try:
+            s.topics = await asyncio.wait_for(rag.make_topics(s.name, [p.title for p in pages]), timeout=5)
+        except TimeoutError:
+            log.info("Site %s topic suggestions timed out", s.id)
         s.vocab = rag.site_vocabulary(s.name, s.url, s.topics, pages)
         s.stage, s.message = "ready", f"Indexed {len(pages)} pages ({s.chunks_indexed} chunks)."
-        log.info("Site %s ready: %s", s.id, s.message)
+        log.info("Site %s ready: %s Crawl %.1fs, index %.1fs, topics %.1fs", s.id, s.message,
+                 crawled - started, indexed - crawled, time.perf_counter() - indexed)
     except asyncio.CancelledError:
         log.info("Crawl %s cancelled", s.id)
         raise
@@ -228,6 +235,8 @@ async def session_cookie(request: Request, call_next):
         sid = uuid.uuid4().hex
     request.state.session = sid
     response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "private, no-store"
     if is_new:
         https = request.url.scheme == "https" or (
             config.TRUST_PROXY_HEADERS and request.headers.get("x-forwarded-proto", "") == "https")
@@ -299,8 +308,13 @@ async def start_crawl(body: CrawlIn, request: Request):
         s = Site(id=uuid.uuid4().hex[:12], session=sid, url=url, stage="queued",
                  message="Waiting for a free slot…", max_pages=max_pages)
         sites[sid] = s
-        s.task = asyncio.create_task(build(s, max_pages))
+        if config.ON_VERCEL:
+            await build(s, max_pages)
+        else:
+            s.task = asyncio.create_task(build(s, max_pages))
     log.info("New crawl %s for %s (max %d pages); %d active sites", s.id, url, max_pages, len(sites))
+    if config.ON_VERCEL:
+        return await status(request)
     return {"site_id": s.id}
 
 

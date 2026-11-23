@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ON_VERCEL = os.getenv("VERCEL") == "1"
+
 # Models are public, so never send a (possibly expired) Hugging Face login token when downloading them.
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -50,7 +52,9 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 # Local models (ONNX via FastEmbed, CPU only, no API quota)
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL = os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2").strip()  # empty disables reranking
-MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "model_cache")
+if RERANK_MODEL.lower() == "off":
+    RERANK_MODEL = ""
+MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "/tmp/sitesense-model-cache" if ON_VERCEL else "model_cache")
 
 # Retrieval: fetch RETRIEVE_CANDIDATES chunks by meaning, rerank them, keep the best TOP_K.
 TOP_K = _int("TOP_K", 6)
@@ -65,7 +69,7 @@ CRAWL_CONCURRENCY = _int("CRAWL_CONCURRENCY", 8)
 DEFAULT_MAX_PAGES = _int("DEFAULT_MAX_PAGES", 200)
 MAX_PAGES_LIMIT = _int("MAX_PAGES_LIMIT", 500)
 REQUEST_TIMEOUT = _float("REQUEST_TIMEOUT", 15)
-USE_PLAYWRIGHT = _bool("USE_PLAYWRIGHT", True)
+USE_PLAYWRIGHT = not ON_VERCEL and _bool("USE_PLAYWRIGHT", True)
 USER_AGENT = os.getenv("USER_AGENT", "SiteSenseBot/1.0 (+website-to-chatbot crawler)")
 
 # Multi-user limits. Each visitor (browser session) gets their own website and chatbot.
@@ -80,5 +84,5 @@ TTS_PER_MINUTE = _int("TTS_PER_MINUTE", 20)
 # Set true only behind a reverse proxy (Hugging Face Spaces, Render, Nginx…) so the real client IP is used.
 TRUST_PROXY_HEADERS = _bool("TRUST_PROXY_HEADERS", False)
 
-CHROMA_DIR = os.getenv("CHROMA_DIR", "chroma_data")
+CHROMA_DIR = os.getenv("CHROMA_DIR", "/tmp/sitesense-chroma" if ON_VERCEL else "chroma_data")
 TTS_VOICE = os.getenv("TTS_VOICE", "en-US-AriaNeural")
