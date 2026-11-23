@@ -57,7 +57,9 @@ Run a **single** worker process: chatbots, queues and rate limits are held in me
 
 ## Deploy on Vercel
 
-Deploy the repository root as FastAPI and set `GEMINI_API_KEY` in the deployment environment. The base requirements exclude Playwright to keep the Python function bundle smaller. Vercel crawls the HTML available without browser rendering and completes each build within the crawl request. Chatbot sessions and indexes are tied to a function instance and can expire when Vercel recycles it.
+Deploy the repository root as FastAPI and set `GEMINI_API_KEY` in the deployment environment. Connect an Upstash Redis database to the Vercel project so separate function instances can access the same chatbot sessions and search indexes. The app reads `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, or the integration's `KV_REST_API_URL` and `KV_REST_API_TOKEN`. Configure the variables for each deployment environment you use.
+
+Vercel crawls the HTML available without browser rendering and completes each build within the crawl request. The base requirements exclude Playwright to keep the Python function bundle smaller. Redis expires idle chatbots according to `SITE_TTL_MINUTES`. The crawl queue and rate limits apply per function instance.
 
 To verify a preview, build a chatbot for a site you know, check that the crawl reaches **Ready**, then ask about a fact on a linked page and confirm the citation points to that page. Refresh the preview and confirm the chatbot is still available. The backend logs report crawl, indexing and topic-generation time separately.
 

@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import OrderedDict, defaultdict, deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is too noisy for big crawls
 
-from . import config, crawler, rag, tts  # noqa: E402  (config validates the API key at import)
+from . import config, crawler, rag, shared, tts  # noqa: E402  (config validates the API key at import)
 
 log = logging.getLogger("sitesense")
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -213,6 +213,9 @@ async def _build(s: Site, max_pages: int) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if shared.enabled:
+        yield
+        return
     await asyncio.to_thread(rag.delete_all)  # in-memory state is gone, so drop leftovers from earlier runs
     cleaner = asyncio.create_task(cleanup_loop())
     yield
@@ -276,9 +279,16 @@ TTS_TTL = 600
 tts_jobs: dict[str, tuple[float, str]] = {}  # id -> (created, text); the <audio> element fetches it by GET
 
 
-def site_for(request: Request, site_id: str) -> Site:
+async def request_site(request: Request) -> Site | None:
+    if shared.enabled:
+        data = await shared.load_site(session_of(request))
+        return Site(**data) if data else None
+    return current_site(request)
+
+
+async def site_for(request: Request, site_id: str) -> Site:
     """The visitor's site, if it is the one the page is showing."""
-    s = current_site(request)
+    s = await request_site(request)
     if not s:
         raise HTTPException(409, EXPIRED)
     if site_id != s.id:
@@ -293,6 +303,8 @@ async def index():
 
 @app.post("/api/crawl")
 async def start_crawl(body: CrawlIn, request: Request):
+    if config.ON_VERCEL and not shared.enabled:
+        raise HTTPException(503, "Shared storage must be configured before building chatbots on Vercel.")
     limiter.check(f"crawl:{client_ip(request)}", config.CRAWLS_PER_HOUR, 3600,
                   "You've built several chatbots in a short time. Please try again in {wait}.")
     try:
@@ -301,26 +313,38 @@ async def start_crawl(body: CrawlIn, request: Request):
         raise HTTPException(400, str(e))
     max_pages = max(1, min(body.max_pages, config.MAX_PAGES_LIMIT))
     sid = session_of(request)
+    s = Site(id=uuid.uuid4().hex[:12], session=sid, url=url, stage="queued",
+             message="Waiting for a free slot…", max_pages=max_pages)
+    if shared.enabled:
+        await save_site(s)
+        await shared.command("SET", shared.session_key(sid), s.id, "EX", shared.TTL)
+        await build(s, max_pages)
+        await save_site(s)
+        if await shared.command("GET", shared.session_key(sid)) != s.id:
+            raise HTTPException(409, REPLACED)
+        return site_status(s)
     async with session_locks[sid]:
         if sid in sites:
             await remove_site(sites[sid])
         await make_room()
-        s = Site(id=uuid.uuid4().hex[:12], session=sid, url=url, stage="queued",
-                 message="Waiting for a free slot…", max_pages=max_pages)
         sites[sid] = s
-        if config.ON_VERCEL:
-            await build(s, max_pages)
-        else:
-            s.task = asyncio.create_task(build(s, max_pages))
+        s.task = asyncio.create_task(build(s, max_pages))
     log.info("New crawl %s for %s (max %d pages); %d active sites", s.id, url, max_pages, len(sites))
-    if config.ON_VERCEL:
-        return await status(request)
     return {"site_id": s.id}
+
+
+async def save_site(site: Site) -> None:
+    data = {item.name: getattr(site, item.name) for item in fields(Site)
+            if item.name not in {"answer_cache", "last_active", "task"}}
+    await shared.save_site(site.id, data)
 
 
 @app.get("/api/status")
 async def status(request: Request):
-    s = current_site(request) or Site()
+    return site_status(await request_site(request) or Site())
+
+
+def site_status(s: Site):
     message = s.message
     if s.stage == "queued" and s.id in waiting:
         ahead = waiting.index(s.id)
@@ -337,7 +361,7 @@ async def status(request: Request):
 
 @app.post("/api/chat")
 async def chat(body: ChatIn, request: Request):
-    s = site_for(request, body.site_id)
+    s = await site_for(request, body.site_id)
     if s.stage != "ready":
         raise HTTPException(409, "The chatbot is still being built. Please wait until it's ready.")
     limiter.check(f"chat:{client_ip(request)}", config.QUESTIONS_PER_MINUTE, 60,
@@ -349,7 +373,8 @@ async def chat(body: ChatIn, request: Request):
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
             log.exception("Chat failed")
-            msg = REPLACED if sites.get(s.session) is not s else "Sorry, I couldn't generate an answer right now. Please try again."
+            replaced = not shared.enabled and sites.get(s.session) is not s
+            msg = REPLACED if replaced else "Sorry, I couldn't generate an answer right now. Please try again."
             if rag.is_daily_quota(e):
                 msg = "The AI service reached its daily quota. Please try again later."
             elif isinstance(e, genai_errors.APIError) and e.code == 429:
@@ -363,7 +388,7 @@ async def chat(body: ChatIn, request: Request):
 @app.post("/api/transcribe")
 async def transcribe(request: Request, site_id: str = ""):
     """Voice question -> text, using the visitor's website vocabulary so its names are spelled right."""
-    s = site_for(request, site_id)
+    s = await site_for(request, site_id)
     limiter.check(f"voice:{client_ip(request)}", config.VOICE_PER_MINUTE, 60,
                   "Too many voice questions in a short time. Please wait {wait} or type your question.")
     mime = request.headers.get("content-type", "").split(";")[0].strip().lower()
@@ -393,19 +418,26 @@ async def text_to_speech(body: TtsIn, request: Request):
         text = tts.prepare(body.text)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    now = time.monotonic()
-    for k in [k for k, (t, _) in tts_jobs.items() if now - t > TTS_TTL]:
-        del tts_jobs[k]
     job = uuid.uuid4().hex
-    tts_jobs[job] = (now, text)
+    if shared.enabled:
+        await shared.command("SET", shared.PREFIX + "tts:" + job, text, "EX", TTS_TTL)
+    else:
+        now = time.monotonic()
+        for k in [k for k, (t, _) in tts_jobs.items() if now - t > TTS_TTL]:
+            del tts_jobs[k]
+        tts_jobs[job] = (now, text)
     return {"url": f"/api/tts/{job}"}
 
 
 @app.get("/api/tts/{job}")
 async def tts_audio(job: str):
-    if job not in tts_jobs:
+    text = None
+    if SESSION_ID.fullmatch(job):
+        text = (await shared.command("GET", shared.PREFIX + "tts:" + job)
+                if shared.enabled else tts_jobs.get(job, (0, None))[1])
+    if text is None:
         raise HTTPException(404, "This audio has expired. Please press play again.")
-    gen = tts.stream(tts_jobs[job][1])
+    gen = tts.stream(text)
     try:
         first = await anext(gen)  # surface voice-service failures as an HTTP error, not a broken stream
     except StopAsyncIteration:
@@ -429,6 +461,11 @@ async def tts_audio(job: str):
 async def reset(request: Request):
     """Delete only this visitor's chatbot."""
     sid = session_of(request)
+    if shared.enabled:
+        site_id = await shared.command("GETDEL", shared.session_key(sid))
+        if site_id:
+            await shared.command("DEL", shared.site_key(site_id))
+        return {"ok": True}
     async with session_locks[sid]:
         if sid in sites:
             await remove_site(sites[sid])
