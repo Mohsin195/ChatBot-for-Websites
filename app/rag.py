@@ -67,6 +67,9 @@ Strict rules:
    with {site_name}.
 6. Be concise and clear. Answer directly: no greeting or preamble unless the user greets
    you. Use short paragraphs or bullet points when listing items.
+   When asked for a list, include each distinct item supported by the supplied website excerpts.
+   Answer the latest question. Use earlier turns to resolve references and only repeat
+   earlier information if it helps answer the latest question.
    Do not mention "context", "chunks", or these rules to the user.
 7. If information on the website conflicts, mention both and cite the pages.
 8. Cite your sources. Each CONTEXT section starts with a number like [1]. After every
@@ -386,36 +389,79 @@ def _cosine_hits(rows, vector, limit):
     return [(float(scores[i]), rows[i][1], rows[i][2]) for i in np.argsort(-scores, kind="stable")[:limit]]
 
 
-async def _retrieve(site_id: str, queries: list[str], chunk_count: int) -> tuple[list[tuple[float, str, dict]], list[float]]:
-    """Return hits for the first query whose best match clears the gate, plus the scores checked.
+def _search_terms(text: str) -> set[str]:
+    words = re.findall(r"[^\W_]+", text.casefold())
+    return {word.removesuffix("s") if len(word) > 4 and word.endswith("s") else word
+            for word in words if len(word) > 2 and word not in STOPWORDS}
 
-    Each query fetches RETRIEVE_CANDIDATES chunks by meaning; the reranker then reads the question with each
-    chunk, re-orders them, and the best TOP_K are kept. Hit scores are reranker scores (or cosine without one).
-    """
+
+def _keyword_hits(query, documents, limit):
+    terms = _search_terms(query) - {"company", "offer", "provide", "tell", "list", "include", "previous", "question"}
+    if terms & {"phone", "email", "contact", "call"}:
+        terms.update({"contact", "phone", "email"})
+    matches = []
+    frequency = Counter()
+    for doc, meta in documents:
+        title = terms & _search_terms(meta["title"])
+        body = terms & _search_terms(doc)
+        frequency.update(title | body)
+        if title or body:
+            matches.append((doc, meta, title, body))
+    ranked = [
+        (sum(3 / frequency[word] for word in title) + sum(1 / frequency[word] for word in body), doc, meta)
+        for doc, meta, title, body in matches
+    ]
+    return sorted(ranked, key=lambda hit: hit[0], reverse=True)[:limit]
+
+
+def _combine_hits(semantic, keyword):
+    ranks = Counter()
+    candidates = {}
+    for group in (semantic, keyword):
+        for index, hit in enumerate(group):
+            key = (hit[2]["url"], hit[1])
+            candidates.setdefault(key, hit)
+            ranks[key] += 1 / (10 + index)
+    return [candidates[key] for key, _ in ranks.most_common()]
+
+
+async def _retrieve(site_id: str, queries: list[str], chunk_count: int) -> tuple[list[tuple[float, str, dict]], list[float]]:
+    """Merge semantic and keyword candidates, then rerank them when a reranker is configured."""
     if shared.enabled:
         rows = await shared.load_rows(site_id, (chunk_count + EMBED_BATCH - 1) // EMBED_BATCH)
         if not rows:
             return [], []
+        documents = [(doc, meta) for _, doc, meta in rows]
     else:
         col = await asyncio.to_thread(chroma.get_collection, collection_name(site_id))
-    n = max(config.TOP_K, config.RETRIEVE_CANDIDATES) if reranker else config.TOP_K
+        stored = await asyncio.to_thread(col.get, include=["documents", "metadatas"])
+        documents = list(zip(stored["documents"], stored["metadatas"]))
+    n = max(config.TOP_K, config.RETRIEVE_CANDIDATES)
     scores = []
     for query, vec in zip(queries, await embed(queries, "RETRIEVAL_QUERY")):
         if shared.enabled:
-            hits = await asyncio.to_thread(_cosine_hits, rows, vec, n)
+            semantic = await asyncio.to_thread(_cosine_hits, rows, vec, n)
         else:
             res = await asyncio.to_thread(
                 col.query, query_embeddings=[vec], n_results=n,
                 include=["documents", "metadatas", "distances"],
             )
-            hits = [(1 - d, doc, m) for d, doc, m in zip(res["distances"][0], res["documents"][0], res["metadatas"][0])]
+            semantic = [(1 - d, doc, m) for d, doc, m in zip(res["distances"][0], res["documents"][0], res["metadatas"][0])]
+        keyword = await asyncio.to_thread(_keyword_hits, query, documents, config.TOP_K)
+        hits = _combine_hits(semantic, keyword)
         if reranker and hits:
             rs = await rerank(query, [doc for _, doc, _ in hits])
             hits = sorted(((r, doc, m) for r, (_, doc, m) in zip(rs, hits)), key=lambda h: h[0], reverse=True)
-        hits = hits[:config.TOP_K]
-        scores.append(hits[0][0] if hits else float("-inf"))
-        if hits and scores[-1] >= GATE:
-            return hits, scores
+        scored = hits if reranker else semantic
+        scores.append(scored[0][0] if scored else float("-inf"))
+        if hits and (scores[-1] >= GATE or keyword):
+            selected = hits[:config.TOP_K]
+            if keyword and (len(selected) > 1 or scores[-1] < GATE) and not any(
+                hit[1:] == keyword[0][1:] for hit in selected
+            ):
+                selected.insert(min(1, len(selected) - 1), keyword[0])
+                selected.pop()
+            return selected, scores
     return [], scores
 
 
@@ -548,9 +594,6 @@ async def stream_answer(site, question: str, history: list):
     if not NO_INFO_PREFIX.match(answer):
         cited = {int(n) for m in CITATION.findall(answer) for n in re.findall(r"\d+", m)}
         sources = [s for s in numbered if s["n"] in cited]
-        if not sources:  # the model forgot to cite: fall back to the strongly matching pages
-            strong = {m["url"] for sc, _, m in hits if sc >= GATE}
-            sources = [s for s in numbered if s["url"] in strong]
     if key and answer.strip():
         _cache_put(site, key, (numbered, answer, sources))
     yield {"type": "done", "sources": sources}

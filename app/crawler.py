@@ -22,6 +22,10 @@ log = logging.getLogger("sitesense.crawler")
 
 JS_FALLBACK_CHARS = 200  # below this, the page is probably rendered by JavaScript
 MIN_TEXT_CHARS = 80  # below this, the page is treated as empty
+CONTACT_DETAILS = re.compile(
+    r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}|"
+    r"(?<!\w)(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)|\d{2,4})[ .-]?\d{3,4}[ .-]\d{4}(?!\d)"
+)
 # Interstitial pages from anti-bot services (Cloudflare, SiteGround, Sucuri, DDoS-Guard, Imunify…)
 BOT_CHECK = re.compile(
     r"<title>\s*(one moment, please|just a moment|attention required|please wait|checking your browser|ddos-guard)"
@@ -114,13 +118,56 @@ def extract(html: str, url: str) -> tuple[str, str, set[str], dict]:
         html, url=url, output_format="markdown", include_tables=True,
         include_links=False, include_images=False, favor_recall=True,
     ) or ""
+    # Content cards and navigation links can look alike to a boilerplate extractor.
+    # Keep structured content from the page body, and leave the crawl links intact.
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "svg", "form"]):
+        tag.decompose()
     if len(text) < JS_FALLBACK_CHARS:
-        # trafilatura drops short pages (e.g. contact pages); fall back to visible body text
-        for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "svg", "form"]):
-            tag.decompose()
         body = soup.body.get_text("\n", strip=True) if soup.body else ""
         if len(body) > len(text):
             text = body
+    if soup.body:
+        content = soup.find("main") or soup.body
+        visible = content.get_text(" ", strip=True)
+        normalized = " ".join(text.casefold().split())
+        missing = {}
+        values = [
+            f"{'Email' if '@' in detail else 'Phone'}: {detail}"
+            for detail in CONTACT_DETAILS.findall(visible)
+            if detail.casefold() not in normalized
+        ]
+        heading = ""
+        source = urlsplit(url)
+        for element in content.select("h1, h2, h3, h4, li, a[href]"):
+            value = element.get_text(" ", strip=True)
+            if element.name in {"h1", "h2", "h3", "h4"}:
+                heading = value
+            if element.name == "a":
+                href = element["href"]
+                if href.startswith(("mailto:", "tel:")):
+                    target = href.split(":", 1)[1].split("?", 1)[0]
+                    value = target if href.startswith("mailto:") or not value else value
+                    if value.casefold() not in normalized:
+                        value = f"{'Email' if href.startswith('mailto:') else 'Phone'}: {value}"
+                else:
+                    try:
+                        link = urlsplit(urljoin(url, href))
+                    except ValueError:
+                        continue
+                    if (not value or not heading or link.scheme not in {"http", "https"} or
+                            not link.hostname or _bare(link.hostname) != _bare(source.hostname) or
+                            link.path == source.path or
+                            not link.path.startswith("/") or len(value) > 100):
+                        continue
+                    if " ".join(value.casefold().split()) not in normalized:
+                        value = f"{heading}: {value}"
+            values.append(value)
+        for value in values:
+            key = " ".join(value.casefold().split())
+            if key and key not in normalized:
+                missing.setdefault(key, value)
+        if missing:
+            text = "\n\n".join(filter(None, [text, "\n".join(missing.values())]))
     return title or url, text.strip(), links, meta
 
 
